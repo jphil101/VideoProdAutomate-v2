@@ -1,0 +1,11 @@
+# core
+bpy>=4.2            # Blender as a Python module (wheel must match your Python; 5.2 -> Python 3.13). Or use --blender.
+numpy
+pydantic>=2
+pyyaml
+requests
+anthropic>=0.70     # Claude planner (optional at runtime: falls back to the heuristic planner)
+# optional voices / alignment
+# kokoro-onnx       # local neural TTS (downloads ~330 MB of model files on first use)
+# edge-tts          # free online neural TTS with native word timestamps
+# faster-whisper    # word-level alignment for any voice / recorded voice-over

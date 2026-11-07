@@ -1,0 +1,51 @@
+# simreel job file -- every field is optional; CLI flags override these.
+events_file: events.md
+script_file: script.md
+output: ../../output/modular_frame.mp4
+
+video:
+  resolution: 1080p          # 360p 480p 720p 1080p 1440p 2160p, or WxH such as 1080x1350
+  orientation: landscape     # landscape | portrait | square
+  fps: 30
+  quality: preview           # draft (Workbench) | preview (Cycles, low spp) | final (Cycles, high spp)
+  # engine: cycles           # override: cycles | eevee | workbench
+  # samples: 64
+  gpu: auto                  # Cycles uses OptiX/CUDA/HIP/Metal when present
+  intro_s: 1.2
+  outro_s: 2.5
+  transition_s: 0.5
+
+narration:
+  tts: auto                  # auto | elevenlabs | edge | kokoro | pico | espeak | file | none
+  # voice: am_michael        # engine-specific voice
+  # voiceover_file: vo.wav   # with tts: file
+  rate: 1.0
+  aligner: auto              # auto | native | whisper | dtw | estimate
+
+captions:
+  mode: both                 # burn | soft | both | none
+  style: karaoke             # karaoke (active word highlighted) | plain
+  position: bottom           # bottom | middle | top
+  font: Inter
+  highlight_color: "#FFC629"
+  titles: true               # lower-third callouts when an element is installed
+
+stock:
+  provider: none             # none | local | pexels | pixabay | envato
+  # local_dir: ./clips
+  # envato_script: ../../EnvatoDownloader.py
+  fit: crop                  # crop | blurpad
+
+audio:
+  sfx: true                  # impact sounds placed at the simulated landing frames
+  # music_file: bed.mp3      # ducked automatically under the narration
+
+physics:
+  anti_sway: true            # input-shaped crane moves (what real anti-sway controllers do)
+  motion_speed: 1.0
+  strict: false              # fail the job if a body does not settle on its target
+
+planner:
+  planner: auto              # auto (Claude if credentials, else heuristic) | claude | heuristic
+  model: claude-opus-5-5
+  effort: high
