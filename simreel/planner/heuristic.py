@@ -51,8 +51,39 @@ def _content(s: str) -> set[str]:
         n = norm(w)
         if not n or n in STOP:
             continue
-        out.add(DIGIT_WORDS.get(n, n))
+        n = DIGIT_WORDS.get(n, n)
+        if len(n) > 4 and n.endswith("s") and not n.endswith("ss"):
+            n = n[:-1]  # crude plural folding: modules -> module, beams -> beam
+        out.add(n)
     return out
+
+
+ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+            "ninth": 9, "tenth": 10, "last": -1, "final": -1}
+
+
+KIND_NOUNS = {
+    "beam": {"beam", "girder", "joist", "rafter"},
+    "column": {"column", "post", "stanchion"},
+    "slab": {"slab", "unit", "plank", "deck", "floor", "panel"},
+    "module": {"module", "unit", "pod", "box"},
+    "wall_panel": {"wall", "panel"},
+    "brace": {"brace", "bracing"},
+    "box": {"pallet", "container", "load", "crate"},
+}
+
+
+def _ordinal(sentence: str, kind: str) -> int | None:
+    """Ordinal that refers to an element of `kind` ("the second module"), not to anything else
+    ("matches the first", "the first bay")."""
+    nouns = KIND_NOUNS.get(kind, set())
+    toks = re.findall(r"[A-Za-z]+", sentence.lower())
+    for i, w in enumerate(toks):
+        if w in ORDINALS:
+            follow = {t.rstrip("s") for t in toks[i + 1:i + 3]}
+            if follow & nouns:
+                return ORDINALS[w]
+    return None
 
 
 def _grid(text: str) -> tuple[Grid, int]:
@@ -186,7 +217,15 @@ def plan_heuristic(events_text: str, script_text: str, title: str | None = None)
     cur = 0
     sent_words = [_content(s) for s in sentences]
     used = set()
+    kind_seen: dict[str, int] = {}
+    n_of_kind: dict[str, int] = {}
     for g in groups:
+        k = by_id[g["targets"][0]].kind if g["targets"] and g["targets"][0] in by_id else g["action"]
+        n_of_kind[k] = n_of_kind.get(k, 0) + 1
+    for g in groups:
+        k = by_id[g["targets"][0]].kind if g["targets"] and g["targets"][0] in by_id else g["action"]
+        kind_seen[k] = kind_seen.get(k, 0) + 1
+        nth = kind_seen[k]  # this is the nth install of this kind of element
         gw = _content(g["text"]) | {norm(t) for t in g["targets"]}
         for tid in g["targets"]:
             el = by_id.get(tid)
@@ -199,6 +238,12 @@ def plan_heuristic(events_text: str, script_text: str, title: str | None = None)
             score = len(gw & sw) - 0.35 * (si - cur)
             if g["action"] == "bolt" and "bolt" in " ".join(sw):
                 score += 3
+            o = _ordinal(sentences[si], k)  # "the second module" -> the 2nd module install
+            if o is not None and g["action"] != "bolt":
+                if o == nth or (o == -1 and nth == n_of_kind[k]):
+                    score += 2.0
+                else:
+                    score -= 1.0
             if si in used:
                 score -= 3.0 if g["action"] in ("lift_and_place", "lower_into_place") else 1.0
             if score > best_score:

@@ -97,6 +97,17 @@ The Claude planner accepts free prose. The offline heuristic planner works best 
 
 Cycles on a GPU renders `preview` 1080p in roughly 1–3 s/frame. On a 4-core CPU it takes 10–50 s/frame, so use `--quality draft` (Workbench, under 1 s/frame) for iteration, and `preview`/`final` on a GPU machine.
 
+## Crane pace vs. sway
+
+Crane drives are limited to about 3.3 rpm of slew (real cranes run 0.6–1 rpm, so video time is already compressed). Moves are shaped in world space with a zero-vibration input shaper that is tuned to the simulated rope damping. At the default `--motion-speed 1.0`, the load swings visibly in transit but arrives with only a few centimetres of residual sway. Riggers' tag lines then steady it at a hover height above any neighbouring element before the vertical set-down. Raising `--motion-speed` shortens lifts but leaves more residual sway (about 10–16 cm at 1.5). Check `*.physics.json` if you push it.
+
+## Tests
+
+```bash
+python -m pytest tests              # includes real Blender physics bakes (needs bpy, ~15 s)
+python -m pytest tests -m "not slow"  # pure-Python checks only
+```
+
 ## Limitations
 
 * The structural vocabulary is building-frame oriented: grid-based frames, slabs, volumetric modules, panels and braces. Fluids (concrete pours), cloth and soft bodies are not simulated. Describe a pour as a `reveal` of the slab.

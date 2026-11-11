@@ -28,6 +28,7 @@ LAND_VERBS = {"placed", "place", "set", "sets", "lowered", "lands", "landed", "s
               "dropped", "positioned", "fixed", "bolted", "lowers", "settles", "settle", "slots", "slotted", "locks",
               "connects", "connected", "spans", "completes", "stacked", "stacks"}
 INSTALL_ACTIONS = ("lift_and_place", "lower_into_place", "reveal")
+SWAY_ZETA = 0.025  # rope + air damping of the suspended load (also used to tune the input shaper)
 
 
 # =========================================================================== data
@@ -189,7 +190,9 @@ class CraneModel:
         self.hook_block = 0.75
         sp = cfg.physics.motion_speed
         # brisk but physically achievable drive limits (video time ~ compressed real time)
-        self.v_slew, self.a_slew = 0.7 * sp, 0.6 * sp
+        # slew ~3.3 rpm, gentle angular acceleration (real cranes ~0.6-1 rpm; video time is compressed).
+        # Faster slews swing the load harder (centripetal accel) and leave more residual sway.
+        self.v_slew, self.a_slew = 0.35 * sp, 0.2 * sp
         self.v_trol, self.a_trol = 2.2 * sp, 1.5 * sp
         self.v_hoist, self.a_hoist = 2.4 * sp, 2.0 * sp
         self.anti_sway = cfg.physics.anti_sway
@@ -240,7 +243,9 @@ class LiftPlan:
 
 
 def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hook_now: np.ndarray,
-                    obstacles_top: float, fps: int, settle: bool) -> LiftPlan:
+                    obstacles_top: float, fps: int, settle: bool, near_top: float = -1e9) -> LiftPlan:
+    """near_top: highest top of already-placed elements right next to the target (not under it).
+    The load hovers above it, steadies, and only then sets down vertically."""
     lc_local = np.mean(np.array(e.lift_points, dtype=float), axis=0)
     n_lift = len(e.lift_points)
     spread = max([np.linalg.norm(np.array(p[:2]) - lc_local[:2]) for p in e.lift_points] + [0.0])
@@ -276,7 +281,8 @@ def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hoo
     th_h, r_h = crane.ik(hook_now)
     th_y = th_h + wrap_angle(th_y - th_h)
     th_t = th_y + wrap_angle(th_t - th_y)
-    hover = apex_place[2] + 0.35
+    load_bottom_at_target = e.bottom
+    hover = apex_place[2] + max(0.35, near_top + 0.25 - load_bottom_at_target)
     final_z = apex_place[2] + (crane.release_gap if settle else 0.0)
 
     def travel_prof(th0, r0, th1, r1):
@@ -319,7 +325,7 @@ def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hoo
         dC = pC[0]
         V.move(t_hoist0, pC, z_safe)
         # D: travel, starts once the load has cleared its neighbours
-        tD0 = t_hoist0 + (0.8 if tail_up else 0.55) * dC
+        tD0 = t_hoist0 + (0.8 if tail_up else 0.6) * dC  # travel once the load has cleared its neighbours
         pD = travel_prof(th_y, r_y, th_t, r_t)
         dD = pD[0]
         HL.move(tD0, pD, [th_t, r_t])
@@ -327,12 +333,12 @@ def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hoo
         # E: lower to hover, overlapping the end of travel a little
         pE = hoist_prof(z_safe - hover)
         dE = pE[0]
-        tE0 = max(tD1 - 0.3 * dE, t_hoist0 + dC)
+        tE0 = max(tD1, t_hoist0 + dC)  # lower only once the horizontal move (and its shaping) is done
         V.move(tE0, pE, hover)
         tF0 = tE0 + dE
         # F: tag-line steadying, G: final set
         tG0 = tF0 + 0.9 + extra_hold
-        dG = 1.3
+        dG = max(1.3, move_profile(hover - final_z, 0.5, 0.4)[0])  # slow, vertical final set
         V.move(tG0, dG, final_z)
         t_land = tG0 + dG
         t_free0 = t_land + (0.45 if settle else 0.8)
@@ -351,14 +357,22 @@ def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hoo
         z = S["V"].sample(t)[:, 0]
         he = S["H"].sample(t)
         hl = S["HL"].sample(t)
+        # Work in world space: the hanging load responds to the trolley's Cartesian acceleration
+        # (including the centripetal part of a slew), so that is the path the shaper must act on.
+        xy_e = crane.xy(he[:, 0], he[:, 1])
+        xy_l = crane.xy(hl[:, 0], hl[:, 1])
+        pick_xy = crane.xy(np.array(th_y), np.array(r_y))
         if crane.anti_sway:  # each move shaped for the pendulum length it is made with
             if T_shape_e:
-                he = zv_shape(t, he, 2 * T_shape_e)
+                xy_e = zv_shape(t, xy_e, 2 * T_shape_e, SWAY_ZETA)
             if T_shape_l:
-                hl = zv_shape(t, hl, 2 * T_shape_l)
-        hv = he + hl - np.array([th_y, r_y])
-        th, r = hv[:, 0], hv[:, 1]
-        pivot = crane.xy(th, r)
+                xy_l = zv_shape(t, xy_l, 2 * T_shape_l, SWAY_ZETA)  # shaper tuned to the simulated damping
+        pivot = xy_e + xy_l - pick_xy
+        # back to crane coordinates (slew angle unwrapped continuously from the start, trolley radius)
+        dxy = pivot - crane.base
+        th = np.unwrap(np.arctan2(dxy[:, 1], dxy[:, 0]))
+        th += th_h - th[0] + wrap_angle(th[0] - th_h) if len(th) else 0.0
+        r = np.hypot(dxy[:, 0], dxy[:, 1])
         # ---- pendulum: empty-hook part and loaded part
         sway = np.zeros((n, 2))
         rope_e = crane.z_trolley - z
@@ -373,7 +387,7 @@ def plan_crane_lift(crane: CraneModel, e: ResolvedElement, yard_pos, yard_q, hoo
         if m_l.sum() > 3:
             com_drop = sling_h + lc_local[2]
             rope_l = crane.z_trolley - (z[m_l] - com_drop)
-            zeta = np.where(t[m_l] >= S["tF0"], 0.75, 0.025)
+            zeta = np.where(t[m_l] >= S["tF0"], 0.75, SWAY_ZETA)
             s_l = simulate_pendulum(t[m_l], pivot[m_l], rope_l, zeta)
             k = np.where(m_l)[0]
             fade = 1 - min_jerk((t[k] - S["tG0"]) / (S["t_land"] - S["tG0"]))
@@ -469,6 +483,21 @@ class Choreographer:
                 return w.start
         return clip.duration * fallback_frac
 
+    def _near_top(self, e: ResolvedElement, placed: set, margin: float = 0.6) -> float:
+        """Highest top among placed elements beside e's target footprint (supports excluded)."""
+        a = e.aabb()
+        best = -1e9
+        for pid in placed:
+            if pid == e.id or pid in e.supports:
+                continue
+            b = self.scene.elements[pid].aabb()
+            if b[3] < a[0] - margin or b[0] > a[3] + margin or b[4] < a[1] - margin or b[1] > a[4] + margin:
+                continue
+            if b[5] <= a[2] + 0.01:  # entirely below the load's seat: cannot be hit from above
+                continue
+            best = max(best, b[5])
+        return best
+
     def _expand(self) -> tuple[list[list[tuple[Event, str]]], set]:
         per_sentence: list[list[tuple[Event, str]]] = [[] for _ in self.sentences]
         installed = set()
@@ -537,7 +566,7 @@ class Choreographer:
                 if ev.action == "lift_and_place" and crane:
                     obst = max([els[p].top for p in placed] + [yard_top, 0.5])
                     lift_plan = plan_crane_lift(crane, els[t], *layout.yard[t], hook, obst, fps,
-                                                els[t].role == "settle")
+                                                els[t].role == "settle", self._near_top(els[t], placed))
                     need = max(need, crane_free + lift_plan.lead - cue)
                 else:
                     need = max(need, crane_free + 4.2 - cue)
@@ -555,7 +584,8 @@ class Choreographer:
                     e = els[tgt]
                     obst = max([els[p].top for p in placed] + [yard_top, 0.5])
                     lp = lift_plan if (lift_plan is not None and k == first_idx) else \
-                        plan_crane_lift(crane, e, *layout.yard[tgt], hook, obst, fps, e.role == "settle")
+                        plan_crane_lift(crane, e, *layout.yard[tgt], hook, obst, fps, e.role == "settle",
+                                        self._near_top(e, placed))
                     lift_plan = None
                     land_goal = cue_t if k == first_idx else crane_free + lp.lead
                     start = max(crane_free, land_goal - lp.lead)
@@ -767,7 +797,8 @@ class Choreographer:
                 zf = e.pos[2] + (self.cfg.physics.release_gap_m if d["settle"] else 0.0)
                 z = np.where(t < lead - 1.6, z0 + (hover - z0) * min_jerk(t / (lead - 1.6)),
                              hover + (zf - hover) * min_jerk((t - (lead - 1.3)) / 1.3))
-                sway = 0.25 * np.sin(2 * math.pi * t / 3.2) * np.exp(-t / 1.2)
+                # small decaying drift while it descends, faded to exactly zero at touchdown
+                sway = 0.25 * np.sin(2 * math.pi * t / 3.2) * np.exp(-t / 1.2) * (1 - min_jerk(t / (lead - 1.3)))
                 P = np.column_stack([np.full(nn, e.pos[0]) + sway, np.full(nn, e.pos[1]), z])
                 put(B.loc[eid], f0, P)
                 put(B.quat[eid], f0, np.repeat(target_quat(e)[None], nn, 0))

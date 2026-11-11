@@ -293,17 +293,18 @@ def build_site(M, coll):
     bx0, by0, bx1, by1 = site["bounds"]
     # ground
     ground_mat = "soil" if site["ground"] == "soil" else ("pad" if site["ground"] == "concrete" else "gravel")
-    me, _ = build_mesh("ground", [dict(shape="box", size=(400, 400, 0.2), offset=(0, 0, -0.13), material=ground_mat)])
+    me, _ = build_mesh("ground", [dict(shape="box", size=(400, 400, 0.2), material=ground_mat)])
     g = new_object("Ground", me, coll)
-    g.location = ((fx0 + fx1) / 2, (fy0 + fy1) / 2, 0)
+    # origin at the box centre: Bullet centres BOX colliders on the object origin
+    g.location = ((fx0 + fx1) / 2, (fy0 + fy1) / 2, -0.13)
     g.data.materials.append(material(ground_mat))
     rb_add(g, "PASSIVE")
     # ground slab under the building (top at z=0)
     m = 2.2
-    me, _ = build_mesh("pad", [dict(shape="box", size=(fx1 - fx0 + 2 * m, fy1 - fy0 + 2 * m, 0.3), offset=(0, 0, -0.15),
+    me, _ = build_mesh("pad", [dict(shape="box", size=(fx1 - fx0 + 2 * m, fy1 - fy0 + 2 * m, 0.3),
                                     material="pad")])
     pad = new_object("GroundSlab", me, coll)
-    pad.location = ((fx0 + fx1) / 2, (fy0 + fy1) / 2, 0)
+    pad.location = ((fx0 + fx1) / 2, (fy0 + fy1) / 2, -0.15)  # top surface at z = 0
     pad.data.materials.append(material("pad"))
     add_bevel(pad, 0.03)
     rb_add(pad, "PASSIVE")
@@ -606,7 +607,6 @@ def build_elements(M, coll):
         if e.get("visible_from") and not e.get("scale_keys"):
             vf = bf(e["visible_from"])
             _keys_bool(ob, "hide_render", [1, vf], [1.0, 0.0])
-            _keys_bool(ob, "hide_viewport", [1, vf], [1.0, 0.0])
         if e.get("glow_keys"):
             fcs = fcurves_for(ob)
             fc = fcs.new('["glow"]')

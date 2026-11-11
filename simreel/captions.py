@@ -138,6 +138,7 @@ def write_ass(path, cards: list[Card], titles: list[tuple[float, float, str]], W
     border_style = 3 if cs.box else 1
     back = ass_color("#000000", 0x60) if cs.box else ass_color("#000000", 0x80)
     t_size = int(m["size"] * 0.62)
+    title_align = 1 if cs.position == "top" else 7  # keep titles out of the caption band
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2",
         "ScaledBorderAndShadow: yes", "YCbCr Matrix: TV.709", "",
@@ -150,7 +151,7 @@ def write_ass(path, cards: list[Card], titles: list[tuple[float, float, str]], W
         f"{m['align']},{m['margin_h']},{m['margin_h']},{m['margin_v']},1",
         f"Style: Title,{cs.font},{t_size},{ass_color('#FFFFFF')},{ass_color(cs.highlight_color)},"
         f"{ass_color('#000000', 0x40)},{ass_color('#101418', 0x50)},-1,0,0,0,100,100,0,0,3,{max(6, t_size // 3)},0,"
-        f"7,{int(0.045 * W)},{int(0.045 * W)},{int(0.06 * H)},1",
+        f"{title_align},{int(0.045 * W)},{int(0.045 * W)},{int(0.06 * H)},1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     hl = ass_color(cs.highlight_color)
